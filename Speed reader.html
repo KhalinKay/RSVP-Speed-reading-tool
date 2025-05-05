@@ -1,0 +1,348 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RSVP Speed Reading App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            height: 100vh;
+            margin: 0;
+            background-color: #e0e0e0;
+            overflow: hidden;
+            transition: background-color 0.3s;
+        }
+        body.dark-theme {
+            background-color: #333;
+            color: #fff;
+        }
+        #word-display {
+            font-size: 72px;
+            font-family: Verdana, Arial, sans-serif;
+            font-weight: bold;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            min-height: 50vh;
+            background-color: #ffffff;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+        body.dark-theme #word-display {
+            background-color: #444;
+        }
+        #word-display span.word-container {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: pre;
+        }
+        .orp {
+            text-decoration: underline;
+            text-decoration-color: red;
+            text-decoration-thickness: 2px;
+            display: inline; /* Ensure natural text flow */
+        }
+        #input-text {
+            width: 80%;
+            max-width: 600px;
+            height: 80px;
+            margin: 10px;
+            padding: 10px;
+            font-size: 16px;
+            border-radius: 5px;
+        }
+        #wpm-input, #font-size-input, #font-select {
+            width: 100px;
+            padding: 5px;
+            font-size: 16px;
+            margin: 10px;
+            border-radius: 5px;
+        }
+        #controls {
+            margin: 10px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        button:hover {
+            background-color: #0056b3;
+            transform: scale(1.05);
+        }
+        header {
+            padding: 10px;
+            text-align: center;
+        }
+        footer {
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #progress {
+            margin: 10px;
+            font-size: 14px;
+            color: #555;
+        }
+        body.dark-theme #progress {
+            color: #ccc;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>RSVP Speed Reading App</h1>
+    </header>
+    <div id="word-display">-</div>
+    <footer>
+        <textarea id="input-text" placeholder="Enter text to read..."></textarea>
+        <div>
+            <label for="wpm-input">Words per minute (WPM):</label>
+            <input type="number" id="wpm-input" value="300" min="100" max="1000">
+            <label for="font-size-input">Font size (px):</label>
+            <input type="number" id="font-size-input" value="72" min="20" max="200">
+            <label for="font-select">Font:</label>
+            <select id="font-select">
+                <option value="Verdana">Verdana</option>
+                <option value="Arial">Arial</option>
+                <option value="Helvetica">Helvetica</option>
+                <option value="Consolas">Consolas</option>
+            </select>
+        </div>
+        <div id="progress">Word 0/0</div>
+        <div id="controls">
+            <button id="start-btn">Start (Space)</button>
+            <button id="pause-btn">Pause (Space)</button>
+            <button id="reset-btn">Reset (R)</button>
+            <button id="fullscreen-btn">Full Screen</button>
+        </div>
+    </footer>
+
+    <script>
+        let words = [];
+        let currentWordIndex = 0;
+        let intervalId = null;
+        let isPaused = false;
+        let isFullScreen = false;
+
+        // Event listeners for buttons
+        document.getElementById('start-btn').addEventListener('click', () => {
+            console.log('Start button clicked');
+            startReading();
+        });
+        document.getElementById('pause-btn').addEventListener('click', () => {
+            console.log('Pause button clicked');
+            pauseReading();
+        });
+        document.getElementById('reset-btn').addEventListener('click', () => {
+            console.log('Reset button clicked');
+            resetReading();
+        });
+        document.getElementById('fullscreen-btn').addEventListener('click', () => {
+            console.log('Full Screen button clicked');
+            toggleFullScreen();
+        });
+        document.getElementById('font-size-input').addEventListener('change', () => {
+            const fontSize = parseInt(document.getElementById('font-size-input').value) || 72;
+            document.getElementById('word-display').style.fontSize = `${fontSize}px`;
+        });
+        document.getElementById('font-select').addEventListener('change', () => {
+            const font = document.getElementById('font-select').value;
+            document.getElementById('word-display').style.fontFamily = `${font}, Arial, sans-serif`;
+        });
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (e.key === ' ' || e.code === 'Space') {
+                e.preventDefault();
+                if (intervalId && !isPaused) {
+                    pauseReading();
+                } else {
+                    startReading();
+                }
+            } else if (e.key.toLowerCase() === 'r') {
+                resetReading();
+            }
+        });
+
+        function startReading() {
+            console.log('startReading called', { intervalId, currentWordIndex, wordsLength: words.length });
+            if (intervalId || (currentWordIndex >= words.length && words.length > 0)) {
+                console.log('Start aborted: already running or finished');
+                return;
+            }
+
+            const wpmInput = document.getElementById('wpm-input').value;
+            const wpm = parseInt(wpmInput) || 300;
+            if (isNaN(wpm) || wpm < 100 || wpm > 1000) {
+                alert('Please enter a valid WPM between 100 and 1000.');
+                return;
+            }
+            const msPerWord = 60000 / wpm;
+
+            // Process text if starting fresh
+            if (words.length === 0) {
+                const text = document.getElementById('input-text').value.trim();
+                if (!text) {
+                    alert('Please enter some text to read.');
+                    return;
+                }
+                words = text.split(/\s+/).filter(word => word.length > 0);
+                currentWordIndex = 0;
+                console.log('Text processed:', words);
+            }
+
+            updateProgress();
+            isPaused = false;
+            intervalId = setInterval(() => {
+                if (currentWordIndex < words.length && !isPaused) {
+                    const word = words[currentWordIndex];
+                    const displayWord = formatWordWithORP(word);
+                    document.getElementById('word-display').innerHTML = displayWord;
+                    updateProgress();
+                    currentWordIndex++;
+                } else if (currentWordIndex >= words.length) {
+                    stopReading();
+                    document.getElementById('word-display').textContent = 'Finished!';
+                }
+            }, msPerWord);
+            console.log('Interval started:', intervalId);
+        }
+
+        function pauseReading() {
+            console.log('pauseReading called', { intervalId, isPaused });
+            if (intervalId && !isPaused) {
+                isPaused = true;
+                clearInterval(intervalId);
+                intervalId = null;
+                console.log('Paused');
+            }
+        }
+
+        function resetReading() {
+            console.log('resetReading called');
+            pauseReading();
+            words = [];
+            currentWordIndex = 0;
+            isPaused = false;
+            document.getElementById('word-display').textContent = '-';
+            document.getElementById('input-text').value = '';
+            document.getElementById('wpm-input').value = '300';
+            document.getElementById('font-size-input').value = '72';
+            document.getElementById('font-select').value = 'Verdana';
+            document.getElementById('word-display').style.fontSize = '72px';
+            document.getElementById('word-display').style.fontFamily = 'Verdana, Arial, sans-serif';
+            updateProgress();
+        }
+
+        function stopReading() {
+            console.log('stopReading called');
+            if (intervalId) {
+                clearInterval(intervalId);
+                intervalId = null;
+            }
+        }
+
+        function formatWordWithORP(word) {
+            if (!word) return word;
+            const length = word.replace(/[.,!?;]/g, '').length;
+            const orpIndex = Math.floor(length / 2);
+            let displayWord = '';
+            for (let i = 0; i < word.length; i++) {
+                if (i === orpIndex && /[a-zA-Z]/.test(word[i])) {
+                    displayWord += `<span class="orp">${word[i]}</span>`;
+                } else {
+                    displayWord += word[i];
+                }
+            }
+            return `<span class="word-container">${displayWord}</span>`;
+        }
+
+        function updateProgress() {
+            document.getElementById('progress').textContent = `Word ${currentWordIndex}/${words.length}`;
+        }
+
+        function toggleFullScreen() {
+            if (!isFullScreen) {
+                if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen();
+                }
+                isFullScreen = true;
+                document.getElementById('fullscreen-btn').textContent = 'Exit Full Screen';
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+                isFullScreen = false;
+                document.getElementById('fullscreen-btn').textContent = 'Full Screen';
+            }
+        }
+
+        // Update full-screen button text on full-screen change
+        document.addEventListener('fullscreenchange', () => {
+            isFullScreen = !!document.fullscreenElement;
+            document.getElementById('fullscreen-btn').textContent = isFullScreen ? 'Exit Full Screen' : 'Full Screen';
+        });
+    </script>
+</body>
+</html>
